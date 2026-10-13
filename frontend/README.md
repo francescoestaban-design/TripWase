@@ -35,7 +35,7 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 
 1. Create a Firebase project and enable **Authentication > Email/Password**.
 2. In **Firestore Database**, create a database in production mode and choose its region carefully; the region cannot be changed later.
-3. Publish the rules from `firestore.rules`. From the repository root, you can deploy them with `firebase deploy --only firestore:rules --project YOUR_FIREBASE_PROJECT_ID` after installing/logging in to the Firebase CLI and selecting the correct project. Alternatively, paste the file contents in the Firestore **Rules** tab and publish. Signed-in users can create requests and read only their own requests; client updates and deletes are denied.
+3. Publish the rules from `firestore.rules`. From the repository root, you can deploy them with `firebase deploy --only firestore:rules --project YOUR_FIREBASE_PROJECT_ID` after installing/logging in to the Firebase CLI and selecting the correct project. Alternatively, paste the file contents in the Firestore **Rules** tab and publish. Signed-in users can create requests and read only their own requests; client updates and deletes are denied. The rules also require a valid date unless the user explicitly marks dates as flexible.
 4. In Google Cloud Console, enable **Maps JavaScript API**, **Geocoding API**, and **Maps Embed API**. Create an API key restricted to your development/deployment HTTP referrers and to those APIs.
 5. Copy `.env.example` to `.env.local` and fill in the Firebase web app configuration values and `VITE_GOOGLE_MAPS_API_KEY`.
 6. Start the frontend with `npm run dev`.

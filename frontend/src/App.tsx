@@ -208,7 +208,6 @@ function App() {
   const [authError, setAuthError] = useState("");
   const [wizardNotice, setWizardNotice] = useState("");
   const requestFormRef = useRef<HTMLFormElement>(null);
-  const dateInputRef = useRef<HTMLInputElement>(null);
   const [activeDestination, setActiveDestination] = useState(0);
   const [destinationQuery, setDestinationQuery] = useState("");
   const [customDestination, setCustomDestination] = useState<string | null>(null);
@@ -226,6 +225,7 @@ function App() {
   const [targetBudget, setTargetBudget] = useState("");
   const [travelers, setTravelers] = useState(1);
   const [days, setDays] = useState(1);
+  const [experienceDate, setExperienceDate] = useState("");
   const [dateIsFlexible, setDateIsFlexible] = useState(true);
   const [hotelNights, setHotelNights] = useState(1);
   const [hotelRooms, setHotelRooms] = useState(1);
@@ -462,6 +462,7 @@ function App() {
 
   async function handleRequestSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setRequestSubmitError("");
     if (!authUser) {
       setScreen("request");
       setAuthError("Inicia sesión o crea una cuenta antes de preparar la solicitud.");
@@ -475,6 +476,10 @@ function App() {
     const experience = selectedExperience;
     const requestedActivity = experience?.name ?? String(formData.get("activityRequest") || "").trim();
     if (!requestedActivity) {
+      return;
+    }
+    if (!dateIsFlexible && !experienceDate) {
+      setRequestSubmitError("Indica la fecha de la experiencia o vuelve al paso 1 y marca que tus fechas son flexibles.");
       return;
     }
 
@@ -496,7 +501,7 @@ function App() {
         destinationPlaceId: verifiedDestination?.placeId ?? "",
         experienceId: experience?.id ?? "",
         experience: requestedActivity,
-        date: String(formData.get("date") || ""),
+        date: dateIsFlexible ? "" : experienceDate,
         dateIsFlexible,
         travelers,
         days,
@@ -517,7 +522,7 @@ function App() {
       setRequestSummary({
         destination: destination.name,
         experience: requestedActivity,
-        date: String(formData.get("date") || ""),
+        date: dateIsFlexible ? "" : experienceDate,
         dateIsFlexible,
         travelers,
         days,
@@ -551,7 +556,8 @@ function App() {
       setWizardNotice("Elige una experiencia del catálogo o selecciona otra actividad y descríbela.");
       return;
     }
-    if (!dateIsFlexible && dateInputRef.current && !dateInputRef.current.reportValidity()) {
+    if (!dateIsFlexible && !experienceDate) {
+      setWizardNotice("Elige la fecha de la experiencia o marca que tus fechas son flexibles.");
       return;
     }
     setWizardNotice("");
@@ -1233,10 +1239,15 @@ function App() {
               <div className="space-y-2 text-sm font-medium text-stone-700">
                 <span className="flex items-center gap-2"><CalendarDays size={17} /> Fecha de la experiencia</span>
                 <input
-                  ref={dateInputRef}
                   type="date"
                   name="date"
                   min={new Date().toISOString().slice(0, 10)}
+                  value={experienceDate}
+                  onChange={(event) => {
+                    setExperienceDate(event.target.value);
+                    setWizardNotice("");
+                    setRequestSubmitError("");
+                  }}
                   required={!dateIsFlexible}
                   disabled={dateIsFlexible}
                   className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:bg-stone-50 disabled:text-stone-400"
@@ -1245,7 +1256,11 @@ function App() {
                   <input
                     type="checkbox"
                     checked={dateIsFlexible}
-                    onChange={(event) => setDateIsFlexible(event.target.checked)}
+                    onChange={(event) => {
+                      setDateIsFlexible(event.target.checked);
+                      setWizardNotice("");
+                      setRequestSubmitError("");
+                    }}
                     className="h-4 w-4 accent-emerald-800"
                   />
                   Mis fechas son flexibles
@@ -1564,7 +1579,7 @@ function App() {
                 <div><dt className="text-stone-500">Destino</dt><dd className="mt-1 font-semibold">{requestSummary.destination}</dd></div>
                 <div><dt className="text-stone-500">Personas</dt><dd className="mt-1 font-semibold">{requestSummary.travelers} {requestSummary.travelers === 1 ? "persona" : "personas"}</dd></div>
                 <div><dt className="text-stone-500">Duración</dt><dd className="mt-1 font-semibold">{requestSummary.days} días</dd></div>
-                <div><dt className="text-stone-500">Fecha</dt><dd className="mt-1 font-semibold">{requestSummary.dateIsFlexible ? "Flexible" : requestSummary.date}</dd></div>
+                <div><dt className="text-stone-500">Fecha</dt><dd className="mt-1 font-semibold">{requestSummary.dateIsFlexible ? "Flexible" : requestSummary.date || "Pendiente de indicar"}</dd></div>
                 {requestSummary.hotel && <div><dt className="text-stone-500">Alojamiento</dt><dd className="mt-1 font-semibold">{requestSummary.hotel} · {requestSummary.rooms} {requestSummary.rooms === 1 ? "habitación" : "habitaciones"} · {requestSummary.nights} {requestSummary.nights === 1 ? "noche" : "noches"}</dd></div>}
                 {requestSummary.targetBudget > 0 && <div><dt className="text-stone-500">Presupuesto total aproximado</dt><dd className="mt-1 font-semibold">{requestSummary.targetBudget.toLocaleString("es-ES")} €</dd></div>}
               </dl>

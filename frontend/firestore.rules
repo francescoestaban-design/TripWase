@@ -80,6 +80,9 @@ service cloud.firestore {
           && data.date is string
           && data.date.size() <= 20
           && data.dateIsFlexible is bool
+          && (data.dateIsFlexible
+            ? data.date == ''
+            : data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
           && data.travelers is int
           && data.travelers >= 1
           && data.travelers <= 30

@@ -34,7 +34,10 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 ## TripWise local setup
 
 1. Create a Firebase project and enable **Authentication > Email/Password**.
-2. Copy `.env.example` to `.env.local` and fill in the Firebase web app configuration values.
-3. Start the frontend with `npm run dev`.
+2. In Google Cloud Console, enable **Maps JavaScript API**, **Geocoding API**, and **Maps Embed API**. Create an API key restricted to your development/deployment HTTP referrers and to those APIs.
+3. Copy `.env.example` to `.env.local` and fill in the Firebase web app configuration values and `VITE_GOOGLE_MAPS_API_KEY`.
+4. Start the frontend with `npm run dev`.
+
+The destination search uses the Google Maps JavaScript Geocoder and only accepts a city, region, or country returned by Google. The map preview uses Maps Embed. The browser API key is visible to users, so HTTP referrer and API restrictions are required; do not reuse an unrestricted or server-side key.
 
 Firebase Authentication currently handles account creation and sign-in. Experience requests, estimates, bookings, hotel availability, and payments are still frontend previews; they are not stored or sent to a provider.

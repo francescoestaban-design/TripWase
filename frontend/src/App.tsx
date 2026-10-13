@@ -9,6 +9,7 @@ import {
   type User,
 } from "firebase/auth";
 import { auth, firebaseConfigReady } from "./firebase";
+import { geocodeDestination, getGoogleMapsEmbedUrl, googleMapsReady, type VerifiedDestination } from "./googleMaps";
 import {
   Compass,
   MapPin,
@@ -241,6 +242,14 @@ function App() {
   const [activeDestination, setActiveDestination] = useState(0);
   const [destinationQuery, setDestinationQuery] = useState("");
   const [customDestination, setCustomDestination] = useState<string | null>(null);
+  const [verifiedDestination, setVerifiedDestination] = useState<VerifiedDestination | null>(null);
+  const [destinationSearchBusy, setDestinationSearchBusy] = useState(false);
+  const [destinationSearchError, setDestinationSearchError] = useState("");
+  const [destinationPhotoUrl, setDestinationPhotoUrl] = useState(destinations[0].image);
+  const [destinationPhotoSource, setDestinationPhotoSource] = useState("");
+  const [destinationPhotoLoading, setDestinationPhotoLoading] = useState(false);
+  const [destinationPhotoSearchFailed, setDestinationPhotoSearchFailed] = useState(false);
+  const [destinationPhotoFailed, setDestinationPhotoFailed] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [selectedExperienceId, setSelectedExperienceId] = useState<string | null>(null);
   const [activityRequest, setActivityRequest] = useState("");
@@ -337,6 +346,73 @@ function App() {
         tag: "Tu próximo destino",
       }
     : featuredDestination;
+
+  useEffect(() => {
+    setDestinationPhotoFailed(false);
+    setDestinationPhotoSearchFailed(false);
+    setDestinationPhotoSource("");
+    if (!customDestination) {
+      setDestinationPhotoUrl(destination.image);
+      setDestinationPhotoLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const search = new URLSearchParams({
+      action: "query",
+      generator: "search",
+      gsrsearch: `${destination.name} landmark`,
+      gsrnamespace: "6",
+      gsrlimit: "10",
+      prop: "imageinfo",
+      iiprop: "url",
+      iiurlwidth: "1200",
+      format: "json",
+      origin: "*",
+    });
+    let cancelled = false;
+    setDestinationPhotoUrl(destination.image);
+    setDestinationPhotoLoading(true);
+
+    fetch(`https://commons.wikimedia.org/w/api.php?${search}`, {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Photo search failed: ${response.status}`);
+        return response.json();
+      })
+      .then((data: {
+        query?: {
+          pages?: Record<string, {
+            title?: string;
+            imageinfo?: Array<{ thumburl?: string; descriptionurl?: string }>;
+          }>;
+        };
+      }) => {
+        if (cancelled) return;
+        const result = Object.values(data.query?.pages ?? {}).find(
+          (page) => page.imageinfo?.[0]?.thumburl,
+        );
+        if (result?.imageinfo?.[0]?.thumburl) {
+          setDestinationPhotoUrl(result.imageinfo[0].thumburl);
+          setDestinationPhotoSource(result.imageinfo[0].descriptionurl ?? "");
+        } else {
+          setDestinationPhotoSearchFailed(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled || (error instanceof Error && error.name === "AbortError")) return;
+        setDestinationPhotoSearchFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setDestinationPhotoLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [customDestination, destination.image, destination.name]);
   const destinationExperiences = experiences.filter(
     (experience) =>
       experience.destination === destination.name &&
@@ -368,10 +444,16 @@ function App() {
     mealsTotal +
     Number(localTransport || 0) +
     Number(extras || 0);
+  const destinationMapUrl = getGoogleMapsEmbedUrl(
+    `${destination.name}${destination.country ? `, ${destination.country}` : ""}`,
+    verifiedDestination?.placeId,
+  );
 
   function chooseFeaturedDestination(index: number) {
     setActiveDestination(index);
     setCustomDestination(null);
+    setVerifiedDestination(null);
+    setDestinationSearchError("");
     setDestinationQuery("");
     setSelectedExperienceId(null);
     setActivityRequest("");
@@ -390,31 +472,49 @@ function App() {
     );
   }
 
-  function handleDestinationSearch(event: React.FormEvent<HTMLFormElement>) {
+  async function handleDestinationSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const search = destinationQuery.trim();
-    if (!search) return;
+    if (!search || destinationSearchBusy) return;
 
-    const featuredMatch = destinations.find(
-      (item) =>
-        item.name.toLocaleLowerCase() === search.toLocaleLowerCase() ||
-        `${item.name}, ${item.country}`.toLocaleLowerCase() === search.toLocaleLowerCase(),
-    );
-    if (featuredMatch) {
-      chooseFeaturedDestination(destinations.indexOf(featuredMatch));
-      return;
+    setDestinationSearchBusy(true);
+    setDestinationSearchError("");
+
+    try {
+      const verified = await geocodeDestination(search);
+      if (!verified) {
+        setDestinationSearchError("No encontramos ese lugar. Escribe una ciudad, región o país real e inténtalo de nuevo.");
+        return;
+      }
+
+      const featuredMatch = destinations.find((item) =>
+        `${item.name}, ${item.country}`.toLocaleLowerCase() === verified.formattedAddress.toLocaleLowerCase() ||
+        item.name.toLocaleLowerCase() === search.toLocaleLowerCase(),
+      );
+      if (featuredMatch) {
+        chooseFeaturedDestination(destinations.indexOf(featuredMatch));
+      } else {
+        setCustomDestination(verified.formattedAddress);
+        setVerifiedDestination(verified);
+        setSelectedExperienceId(null);
+        setActivityRequest("");
+        setActivityPrice("");
+        setActivityCount(1);
+        setTargetBudget("");
+        setSelectedHotelName("");
+        setHotelNightlyPrice("");
+        setHotelInterest(false);
+        setRequestSummary(null);
+      }
+    } catch (error) {
+      setDestinationSearchError(
+        error instanceof Error
+          ? `No se pudo validar el destino: ${error.message}`
+          : "No se pudo validar el destino. Comprueba la configuración de Google Maps e inténtalo de nuevo.",
+      );
+    } finally {
+      setDestinationSearchBusy(false);
     }
-
-    setCustomDestination(search);
-    setSelectedExperienceId(null);
-    setActivityRequest("");
-    setActivityPrice("");
-    setActivityCount(1);
-    setTargetBudget("");
-    setSelectedHotelName("");
-    setHotelNightlyPrice("");
-    setHotelInterest(false);
-    setRequestSummary(null);
   }
 
   function handleRequestSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -474,7 +574,10 @@ function App() {
 
   function navigateTo(nextScreen: Screen) {
     setScreen(nextScreen);
-    if (nextScreen === "request") setWizardStep(1);
+    if (nextScreen === "request") {
+      setWizardStep(1);
+      setWizardNotice("");
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -572,7 +675,8 @@ function App() {
           ))}
         </nav>
 
-        <div hidden={screen !== "explore"}>
+        {screen === "explore" && (
+        <div>
         <section className="mt-9 grid gap-4 sm:grid-cols-3">
           <Stat icon={<Ticket size={20} />} label="Experiencias de muestra" value="04" />
           <Stat icon={<MapPin size={20} />} label="Destinos destacados" value="04" />
@@ -593,18 +697,35 @@ function App() {
             <input
               id="destination-search"
               value={destinationQuery}
-              onChange={(event) => setDestinationQuery(event.target.value)}
-              placeholder="Ej.: Kioto, Japón · Patagonia, Argentina · cualquier lugar"
+              onChange={(event) => {
+                setDestinationQuery(event.target.value);
+                setDestinationSearchError("");
+              }}
+              placeholder="Escribe un destino real, por ejemplo: Kioto, Japón"
+              aria-describedby="destination-search-help"
               className="min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
             />
             <button
               type="submit"
-              disabled={!destinationQuery.trim()}
+              disabled={!destinationQuery.trim() || destinationSearchBusy || !googleMapsReady}
               className="flex items-center justify-center gap-2 rounded-xl bg-emerald-800 px-5 py-3 font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <MapPin size={18} /> Usar este destino
+              <MapPin size={18} /> {destinationSearchBusy ? "Validando destino..." : "Validar destino"}
             </button>
           </form>
+          <p id="destination-search-help" className="-mt-2 mb-5 text-xs text-stone-500">
+            Indica una ciudad, región o país. Google Maps comprobará que el lugar exista antes de seleccionarlo.
+          </p>
+          {!googleMapsReady && (
+            <p className="-mt-2 mb-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              La búsqueda está pendiente de configuración: añade <code>VITE_GOOGLE_MAPS_API_KEY</code> a <code>.env.local</code> y habilita Maps JavaScript API, Geocoding API y Maps Embed API en Google Cloud.
+            </p>
+          )}
+          {destinationSearchError && (
+            <p role="alert" className="-mt-2 mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+              {destinationSearchError}
+            </p>
+          )}
 
           <div
             className="relative min-h-[360px] overflow-hidden rounded-3xl bg-stone-900 text-white sm:min-h-[420px]"
@@ -612,9 +733,10 @@ function App() {
             aria-label="Destinos recomendados"
           >
             <img
-              key={destination.image}
-              src={destination.image}
+              key={destination.name}
+              src={destinationPhotoFailed ? destination.image : destinationPhotoUrl}
               alt={`Paisaje de ${destination.name}${destination.country ? `, ${destination.country}` : ""}`}
+              onError={() => setDestinationPhotoFailed(true)}
               className="absolute inset-0 z-0 h-full w-full object-cover"
             />
             <div className="absolute inset-0 z-10 bg-gradient-to-r from-black/75 via-black/35 to-black/5" />
@@ -849,9 +971,27 @@ function App() {
             <Users size={14} /> Precios orientativos; disponibilidad y tarifas finales dependen de las fechas.
           </p>
         </section>
+        <section aria-label={`Mapa de ${destination.name}`} className="mb-8 mt-6 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+          {destinationMapUrl ? (
+            <iframe
+              title={`Mapa de ${destination.name}`}
+              src={destinationMapUrl}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              className="h-72 w-full border-0"
+            />
+          ) : (
+            <div className="flex min-h-28 items-center gap-3 p-5 text-sm text-stone-600">
+              <MapPin className="shrink-0 text-emerald-800" size={22} />
+              <p>El mapa aparecerá cuando configures la clave de Google Maps. Los destinos escritos no se seleccionan hasta que Google Maps esté habilitado.</p>
+            </div>
+          )}
+        </section>
         </div>
+        )}
 
-        <section id="request" hidden={screen !== "request"} className="mb-10 scroll-mt-8 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
+        {screen === "request" && (
+        <section id="request" className="mb-10 scroll-mt-8 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="mb-7 max-w-2xl">
             <p className="text-sm font-medium text-emerald-800">CUÉNTANOS QUÉ BUSCAS</p>
             <h2 className="mt-1 text-2xl font-bold">
@@ -862,6 +1002,74 @@ function App() {
                 ? "Elige cualquier lugar, dinos qué te interesa y configura el plan para ti o para tu grupo."
                 : "Regístrate o inicia sesión antes de preparar una solicitud o reserva."}
             </p>
+          </div>
+
+          <div className="mb-7 grid overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 sm:grid-cols-[minmax(0,1fr)_minmax(16rem,0.8fr)]">
+            {!destinationPhotoFailed ? (
+              <img
+                src={destinationPhotoUrl}
+                alt={`Vista de ${destination.name}`}
+                onError={() => setDestinationPhotoFailed(true)}
+                className="h-52 w-full object-cover sm:h-full sm:min-h-56"
+              />
+            ) : (
+              <div className="flex min-h-52 items-center justify-center bg-emerald-50 text-emerald-800 sm:min-h-56">
+                <div className="text-center">
+                  <MapPin className="mx-auto" size={32} />
+                  <p className="mt-2 text-sm font-semibold">Imagen no disponible</p>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col justify-center p-5 sm:p-6">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Destino seleccionado</p>
+              <h3 className="mt-2 text-xl font-bold">{destination.name}{destination.country ? `, ${destination.country}` : ""}</h3>
+              <p className="mt-2 text-sm leading-6 text-stone-600">
+                {destinationPhotoLoading
+                  ? "Buscando una fotografía de este destino..."
+                  : destinationPhotoSearchFailed
+                    ? "No encontramos una foto específica; mostramos una imagen ilustrativa."
+                    : customDestination && !destinationPhotoSource
+                    ? "Mostramos una imagen ilustrativa mientras no encontremos una fotografía específica."
+                    : "Confirma visualmente el lugar antes de continuar."}
+              </p>
+              {destinationPhotoSource && (
+                <a
+                  href={destinationPhotoSource}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 text-xs font-medium text-emerald-800 underline underline-offset-2"
+                >
+                  Ver fuente de la fotografía
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setDestinationQuery("");
+                  navigateTo("explore");
+                }}
+                className="mt-4 w-fit rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100"
+              >
+                Cambiar destino
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-7 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+            {destinationMapUrl ? (
+              <iframe
+                title={`Mapa de ${destination.name}`}
+                src={destinationMapUrl}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                className="h-64 w-full border-0"
+              />
+            ) : (
+              <p className="flex items-center gap-3 p-4 text-sm text-stone-600">
+                <MapPin className="shrink-0 text-emerald-800" size={20} />
+                Configura la clave de Google Maps para mostrar el mapa del destino.
+              </p>
+            )}
           </div>
 
           {!authReady ? (
@@ -977,7 +1185,7 @@ function App() {
             onChange={() => setRequestSummary(null)}
             className="space-y-6"
           >
-            <div hidden={wizardStep !== 1} className="space-y-6">
+            <fieldset disabled={wizardStep !== 1} hidden={wizardStep !== 1} className="min-w-0 space-y-6 border-0 p-0">
             <div className="grid gap-5 sm:grid-cols-2">
               <label className="space-y-2 text-sm font-medium text-stone-700">
                 <span>Destino</span>
@@ -1134,9 +1342,9 @@ function App() {
               </button>
             </div>
             {wizardNotice && <p role="alert" className="text-sm text-rose-700">{wizardNotice}</p>}
-            </div>
+            </fieldset>
 
-            <div hidden={wizardStep !== 2} className="space-y-6">
+            <fieldset disabled={wizardStep !== 2} hidden={wizardStep !== 2} className="min-w-0 space-y-6 border-0 p-0">
             <div className="grid gap-5 sm:grid-cols-2">
               <label className="space-y-2 text-sm font-medium text-stone-700">
                 <span>Idioma preferido para la experiencia</span>
@@ -1344,9 +1552,9 @@ function App() {
                 Revisar presupuesto
               </button>
             </div>
-            </div>
+            </fieldset>
 
-            <div hidden={wizardStep !== 3} className="space-y-6">
+            <fieldset disabled={wizardStep !== 3} hidden={wizardStep !== 3} className="min-w-0 space-y-6 border-0 p-0">
             <section aria-labelledby="estimate-title" className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:p-6">
               <p className="text-sm font-medium text-emerald-800">PRESUPUESTO ORIENTATIVO</p>
               <h3 id="estimate-title" className="mt-1 text-xl font-bold">Tu estimación para {destination.name}</h3>
@@ -1480,14 +1688,16 @@ function App() {
               <Send size={18} />
               Ver resumen estimado
             </button>
-            </div>
+            </fieldset>
           </form>
           </>
           )}
 
         </section>
+        )}
 
-        <section hidden={screen !== "itinerary"} className="mb-10 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
+        {screen === "itinerary" && (
+        <section className="mb-10 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="mb-6">
             <p className="text-sm font-medium text-emerald-800">MIS PLANES</p>
             <h2 className="mt-1 text-2xl font-bold">Itinerario</h2>
@@ -1496,11 +1706,60 @@ function App() {
             <article className="rounded-2xl bg-stone-50 p-5">
               <p className="text-sm font-semibold text-emerald-800">VISTA PREVIA · AÚN NO RESERVADA</p>
               <h3 className="mt-2 text-xl font-bold">{requestSummary.experience}</h3>
-              <p className="mt-2 text-stone-600">
-                {requestSummary.destination} · {requestSummary.dateIsFlexible ? "Fecha flexible" : requestSummary.date} · {requestSummary.days} días · {requestSummary.adults + requestSummary.children} personas
-              </p>
+              <p className="mt-2 text-stone-600">{requestSummary.destination} · {requestSummary.adults + requestSummary.children} personas</p>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <label className="space-y-2 text-sm font-medium text-stone-700">
+                  <span>Fecha de la experiencia</span>
+                  <input
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={requestSummary.date}
+                    disabled={requestSummary.dateIsFlexible}
+                    onChange={(event) => setRequestSummary((current) => current ? {
+                      ...current,
+                      date: event.target.value,
+                      dateIsFlexible: false,
+                    } : current)}
+                    className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:bg-stone-100 disabled:text-stone-500"
+                  />
+                  <span className="flex items-center gap-2 font-normal">
+                    <input
+                      type="checkbox"
+                      checked={requestSummary.dateIsFlexible}
+                      onChange={(event) => setRequestSummary((current) => current ? {
+                        ...current,
+                        dateIsFlexible: event.target.checked,
+                        date: event.target.checked ? "" : current.date,
+                      } : current)}
+                      className="h-4 w-4 accent-emerald-800"
+                    />
+                    Tengo fechas flexibles
+                  </span>
+                </label>
+                <label className="space-y-2 text-sm font-medium text-stone-700">
+                  <span>Días en el destino</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="90"
+                    value={requestSummary.days}
+                    onChange={(event) => setRequestSummary((current) => current ? {
+                      ...current,
+                      days: Math.max(1, Number(event.target.value)),
+                    } : current)}
+                    className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigateTo("request")}
+                className="mt-5 rounded-xl border border-emerald-800 px-4 py-2.5 font-semibold text-emerald-900 transition hover:bg-emerald-50"
+              >
+                Modificar actividad y otros datos
+              </button>
               <p className="mt-2 text-sm text-stone-500">
-                El itinerario definitivo se mostrará cuando conectemos la disponibilidad y se confirme la reserva.
+                Los cambios se reflejan en esta vista previa de la sesión. El itinerario no está reservado ni guardado.
               </p>
             </article>
           ) : (
@@ -1514,8 +1773,10 @@ function App() {
             </div>
           )}
         </section>
+        )}
 
-        <section hidden={screen !== "expenses"} className="mb-10 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
+        {screen === "expenses" && (
+        <section className="mb-10 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="mb-6">
             <p className="text-sm font-medium text-emerald-800">DESGLOSE</p>
             <h2 className="mt-1 text-2xl font-bold">Gastos y presupuesto</h2>
@@ -1575,6 +1836,7 @@ function App() {
             </div>
           )}
         </section>
+        )}
 
         <footer className="border-t border-stone-200 py-6 text-sm text-stone-400">
           TripWise · Experiencias que te acercan al destino.

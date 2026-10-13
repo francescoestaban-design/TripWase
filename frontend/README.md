@@ -34,10 +34,14 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 ## TripWise local setup
 
 1. Create a Firebase project and enable **Authentication > Email/Password**.
-2. In Google Cloud Console, enable **Maps JavaScript API**, **Geocoding API**, and **Maps Embed API**. Create an API key restricted to your development/deployment HTTP referrers and to those APIs.
-3. Copy `.env.example` to `.env.local` and fill in the Firebase web app configuration values and `VITE_GOOGLE_MAPS_API_KEY`.
-4. Start the frontend with `npm run dev`.
+2. In **Firestore Database**, create a database in production mode and choose its region carefully; the region cannot be changed later.
+3. Publish the rules from `firestore.rules`. From the repository root, you can deploy them with `firebase deploy --only firestore:rules --project YOUR_FIREBASE_PROJECT_ID` after installing/logging in to the Firebase CLI and selecting the correct project. Alternatively, paste the file contents in the Firestore **Rules** tab and publish. Signed-in users can create requests and read only their own requests; client updates and deletes are denied.
+4. In Google Cloud Console, enable **Maps JavaScript API**, **Geocoding API**, and **Maps Embed API**. Create an API key restricted to your development/deployment HTTP referrers and to those APIs.
+5. Copy `.env.example` to `.env.local` and fill in the Firebase web app configuration values and `VITE_GOOGLE_MAPS_API_KEY`.
+6. Start the frontend with `npm run dev`.
 
 The destination search uses the Google Maps JavaScript Geocoder and only accepts a city, region, or country returned by Google. The map preview uses Maps Embed. The browser API key is visible to users, so HTTP referrer and API restrictions are required; do not reuse an unrestricted or server-side key.
 
-Firebase Authentication currently handles account creation and sign-in. Experience requests, estimates, bookings, hotel availability, and payments are still frontend previews; they are not stored or sent to a provider.
+Firebase Authentication handles account creation and sign-in. After Firestore is created and the rules are published, submitting the request form saves a document to the `requests` collection, tied to the signed-in user's UID. The app displays a success summary only after Firestore confirms the write; otherwise it shows the Firebase error code. The data is visible in Firebase Console under Firestore Database > Data.
+
+Activity and hotel cards are illustrative samples, not live inventory. Requests are stored for manual quotation; availability, bookable prices, bookings, and payments are not integrated with a supplier.

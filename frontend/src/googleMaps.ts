@@ -2,6 +2,7 @@ import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 
 const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 export const googleMapsReady = Boolean(googleMapsApiKey);
+const GEOCODING_TIMEOUT_MS = 12000;
 
 export type VerifiedDestination = {
   formattedAddress: string;
@@ -31,27 +32,43 @@ function getGeocoder(): Promise<google.maps.Geocoder> {
 }
 
 export async function geocodeDestination(query: string): Promise<VerifiedDestination | null> {
-  const geocoder = await getGeocoder();
-  const { results } = await geocoder.geocode({ address: query });
-  const result = results.find((item) =>
-    item.types.some((type) =>
-      type === "country" ||
-      type === "locality" ||
-      type === "administrative_area_level_1" ||
-      type === "administrative_area_level_2" ||
-      type === "administrative_area_level_3" ||
-      type === "sublocality",
-    ),
-  );
+  let timeoutId: number | undefined;
 
-  if (!result) return null;
+  try {
+    return await Promise.race([
+      (async () => {
+        const geocoder = await getGeocoder();
+        const { results } = await geocoder.geocode({ address: query });
+        const result = results.find((item) =>
+          item.types.some((type) =>
+            type === "country" ||
+            type === "locality" ||
+            type === "administrative_area_level_1" ||
+            type === "administrative_area_level_2" ||
+            type === "administrative_area_level_3" ||
+            type === "sublocality",
+          ),
+        );
 
-  return {
-    formattedAddress: result.formatted_address,
-    latitude: result.geometry.location.lat(),
-    longitude: result.geometry.location.lng(),
-    placeId: result.place_id,
-  };
+        if (!result) return null;
+
+        return {
+          formattedAddress: result.formatted_address,
+          latitude: result.geometry.location.lat(),
+          longitude: result.geometry.location.lng(),
+          placeId: result.place_id,
+        };
+      })(),
+      new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(
+          () => reject(new Error("Google Maps no respondió. Comprueba que Maps JavaScript API y Geocoding API estén habilitadas en el proyecto de esta clave.")),
+          GEOCODING_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+  }
 }
 
 export function getGoogleMapsEmbedUrl(destination: string, placeId?: string): string | null {

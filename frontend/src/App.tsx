@@ -8,7 +8,7 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { auth, firebaseConfigReady } from "./firebase";
+import { auth, firebaseConfigReady, getFirestoreDb } from "./firebase";
 import { geocodeDestination, getGoogleMapsEmbedUrl, googleMapsReady, type VerifiedDestination } from "./googleMaps";
 import {
   Compass,
@@ -25,7 +25,6 @@ import {
   CalendarDays,
   Send,
   Phone,
-  CreditCard,
   LogOut,
   LockKeyhole,
 } from "lucide-react";
@@ -74,7 +73,6 @@ const experiences = [
     category: "Visitas guiadas",
     duration: "3 horas",
     meetingPoint: "Praça do Comércio",
-    price: "35 €",
     image:
       "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=900&q=80",
   },
@@ -86,7 +84,6 @@ const experiences = [
     category: "Cultura",
     duration: "4 horas",
     meetingPoint: "Higashiyama",
-    price: "48 €",
     image:
       "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=900&q=80",
   },
@@ -98,7 +95,6 @@ const experiences = [
     category: "Naturaleza",
     duration: "6 horas",
     meetingPoint: "Cortina d'Ampezzo",
-    price: "62 €",
     image:
       "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=900&q=80",
   },
@@ -110,7 +106,6 @@ const experiences = [
     category: "Deporte",
     duration: "2 horas",
     meetingPoint: "Estadio Santiago Bernabéu",
-    price: "38 €",
     image:
       "https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=900&q=80",
   },
@@ -122,7 +117,6 @@ const hotels = [
     name: "Casa do Mercado",
     neighborhood: "Baixa",
     distance: "A 8 min del punto de encuentro",
-    price: "desde 112 €",
     rating: "4,8",
     image:
       "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=900&q=80",
@@ -132,7 +126,6 @@ const hotels = [
     name: "Higashiyama Garden Stay",
     neighborhood: "Higashiyama",
     distance: "A 6 min del punto de encuentro",
-    price: "desde 138 €",
     rating: "4,9",
     image:
       "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=900&q=80",
@@ -142,7 +135,6 @@ const hotels = [
     name: "Alpine View Lodge",
     neighborhood: "Cortina d'Ampezzo",
     distance: "A 10 min del punto de encuentro",
-    price: "desde 156 €",
     rating: "4,8",
     image:
       "https://images.unsplash.com/photo-1518732714860-b62714ce0c59?auto=format&fit=crop&w=900&q=80",
@@ -152,7 +144,6 @@ const hotels = [
     name: "Estadio Boutique Hotel",
     neighborhood: "Chamartín",
     distance: "A 5 min del estadio",
-    price: "desde 129 €",
     rating: "4,7",
     image:
       "https://images.unsplash.com/photo-1564501049412-61c2a3083791?auto=format&fit=crop&w=900&q=80",
@@ -166,36 +157,15 @@ type RequestSummary = {
   experience: string;
   date: string;
   dateIsFlexible: boolean;
-  adults: number;
-  children: number;
+  travelers: number;
   days: number;
-  activityTotal: number;
   hotel: string;
   nights: number;
   rooms: number;
-  hotelTotal: number;
-  hotelNeedsQuote: boolean;
-  mealsTotal: number;
-  localTransport: number;
-  extras: number;
-  total: number;
-  estimateComplete: boolean;
-  activityNeedsQuote: boolean;
   targetBudget: number;
-  paymentMethod: string;
 };
 
 type Screen = "explore" | "request" | "itinerary" | "expenses";
-
-const formatEuros = (amount: number) =>
-  new Intl.NumberFormat("es-ES", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 2,
-  }).format(amount);
-
-const demoPriceNumber = (price: string) =>
-  Number(price.replace(/[^\d,]/g, "").replace(",", "."));
 
 function getAuthErrorMessage(error: unknown): string {
   const code =
@@ -253,23 +223,17 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [selectedExperienceId, setSelectedExperienceId] = useState<string | null>(null);
   const [activityRequest, setActivityRequest] = useState("");
-  const [activityPrice, setActivityPrice] = useState("");
-  const [activityCount, setActivityCount] = useState(1);
   const [targetBudget, setTargetBudget] = useState("");
-  const [adults, setAdults] = useState(1);
-  const [children, setChildren] = useState(0);
+  const [travelers, setTravelers] = useState(1);
   const [days, setDays] = useState(1);
   const [dateIsFlexible, setDateIsFlexible] = useState(true);
   const [hotelNights, setHotelNights] = useState(1);
   const [hotelRooms, setHotelRooms] = useState(1);
-  const [hotelNightlyPrice, setHotelNightlyPrice] = useState("");
-  const [mealsPerPersonPerDay, setMealsPerPersonPerDay] = useState("");
-  const [localTransport, setLocalTransport] = useState("");
-  const [extras, setExtras] = useState("");
   const [hotelInterest, setHotelInterest] = useState(false);
   const [selectedHotelName, setSelectedHotelName] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("");
   const [requestSummary, setRequestSummary] = useState<RequestSummary | null>(null);
+  const [requestSubmitBusy, setRequestSubmitBusy] = useState(false);
+  const [requestSubmitError, setRequestSubmitError] = useState("");
 
   useEffect(() => {
     if (!auth) {
@@ -429,21 +393,6 @@ function App() {
   const recommendedHotels = hotels.filter(
     (hotel) => hotel.destination === destination.name,
   );
-  const travelerCount = adults + children;
-  const activityTotal = Number(activityPrice || 0) * travelerCount * activityCount;
-  const hotelTotal = hotelInterest ? Number(hotelNightlyPrice || 0) * hotelNights * hotelRooms : 0;
-  const mealsTotal = Number(mealsPerPersonPerDay || 0) * travelerCount * days;
-  const totalEstimate =
-    activityTotal + hotelTotal + mealsTotal + Number(localTransport || 0) + Number(extras || 0);
-  const activityNeedsQuote = !selectedExperience;
-  const estimateComplete =
-    !activityNeedsQuote && activityPrice !== "" && (!hotelInterest || hotelNightlyPrice !== "");
-  const knownCostSubtotal =
-    (activityNeedsQuote ? 0 : activityTotal) +
-    hotelTotal +
-    mealsTotal +
-    Number(localTransport || 0) +
-    Number(extras || 0);
   const destinationMapUrl = getGoogleMapsEmbedUrl(
     `${destination.name}${destination.country ? `, ${destination.country}` : ""}`,
     verifiedDestination?.placeId,
@@ -457,11 +406,8 @@ function App() {
     setDestinationQuery("");
     setSelectedExperienceId(null);
     setActivityRequest("");
-    setActivityPrice("");
-    setActivityCount(1);
     setTargetBudget("");
     setSelectedHotelName("");
-    setHotelNightlyPrice("");
     setHotelInterest(false);
     setRequestSummary(null);
   }
@@ -498,11 +444,8 @@ function App() {
         setVerifiedDestination(verified);
         setSelectedExperienceId(null);
         setActivityRequest("");
-        setActivityPrice("");
-        setActivityCount(1);
         setTargetBudget("");
         setSelectedHotelName("");
-        setHotelNightlyPrice("");
         setHotelInterest(false);
         setRequestSummary(null);
       }
@@ -517,51 +460,95 @@ function App() {
     }
   }
 
-  function handleRequestSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleRequestSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!authUser) {
       setScreen("request");
       setAuthError("Inicia sesión o crea una cuenta antes de preparar la solicitud.");
       return;
     }
+    if (!firebaseConfigReady) {
+      setRequestSubmitError("Firebase no está configurado. Completa las variables de configuración antes de guardar solicitudes.");
+      return;
+    }
     const formData = new FormData(event.currentTarget);
-    const experienceId = String(formData.get("experience"));
-    const experience = experiences.find((item) => item.id === experienceId);
-    const requestedActivity = String(formData.get("activityRequest") || "").trim();
+    const experience = selectedExperience;
+    const requestedActivity = experience?.name ?? String(formData.get("activityRequest") || "").trim();
     if (!requestedActivity) {
       return;
     }
 
-    setRequestSummary({
-      destination: destination.name,
-      experience: experience?.name ?? requestedActivity,
-      date: String(formData.get("date") || ""),
-      dateIsFlexible,
-      adults,
-      children,
-      days,
-      activityTotal,
-      hotel: hotelInterest ? String(formData.get("hotel") || "Por definir") : "",
-      nights: hotelInterest ? hotelNights : 0,
-      rooms: hotelInterest ? hotelRooms : 0,
-      hotelTotal,
-      hotelNeedsQuote: hotelInterest && hotelNightlyPrice === "",
-      mealsTotal,
-      localTransport: Number(localTransport || 0),
-      extras: Number(extras || 0),
-      total: knownCostSubtotal,
-      estimateComplete,
-      activityNeedsQuote,
-      targetBudget: Number(formData.get("budget") || 0),
-      paymentMethod,
-    });
-    setScreen("expenses");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setRequestSubmitBusy(true);
+    setRequestSubmitError("");
+    try {
+      const [{ addDoc, collection, serverTimestamp }, db] = await Promise.all([
+        import("firebase/firestore"),
+        getFirestoreDb(),
+      ]);
+      if (!db) {
+        throw new Error("Firestore is unavailable because Firebase is not configured.");
+      }
+      const requestData = {
+        ownerId: authUser.uid,
+        ownerEmail: authUser.email ?? "",
+        destination: destination.name,
+        destinationCountry: destination.country,
+        destinationPlaceId: verifiedDestination?.placeId ?? "",
+        experienceId: experience?.id ?? "",
+        experience: requestedActivity,
+        date: String(formData.get("date") || ""),
+        dateIsFlexible,
+        travelers,
+        days,
+        hotelInterest,
+        hotel: hotelInterest ? String(formData.get("hotel") || "") : "",
+        lodgingType: hotelInterest ? String(formData.get("lodgingType") || "Sin preferencia") : "",
+        hotelArea: hotelInterest ? String(formData.get("hotelArea") || "").trim() : "",
+        nights: hotelInterest ? hotelNights : 0,
+        rooms: hotelInterest ? hotelRooms : 0,
+        targetBudget: Number(formData.get("budget") || 0),
+        language: String(formData.get("language") || ""),
+        specialRequirements: String(formData.get("specialRequirements") || "").trim(),
+        phone: String(formData.get("phone") || "").trim(),
+        status: "pending",
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, "requests"), requestData);
+      setRequestSummary({
+        destination: destination.name,
+        experience: requestedActivity,
+        date: String(formData.get("date") || ""),
+        dateIsFlexible,
+        travelers,
+        days,
+        hotel: hotelInterest ? String(formData.get("hotel") || "Por definir") : "",
+        nights: hotelInterest ? hotelNights : 0,
+        rooms: hotelInterest ? hotelRooms : 0,
+        targetBudget: Number(formData.get("budget") || 0),
+      });
+      setScreen("expenses");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      const code =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof error.code === "string"
+          ? error.code
+          : "unknown";
+      setRequestSubmitError(
+        code === "permission-denied"
+          ? "Firestore rechazó el guardado. Revisa y publica las reglas de seguridad indicadas en frontend/firestore.rules."
+          : `No se pudo guardar la solicitud en Firestore (código: ${code}). Comprueba que la base esté creada y vuelve a intentarlo.`,
+      );
+    } finally {
+      setRequestSubmitBusy(false);
+    }
   }
 
   function continueWizard() {
-    if (!activityRequest.trim()) {
-      setWizardNotice("Describe la actividad que quieres reservar o elige una experiencia del catálogo.");
+    if (!selectedExperience && !activityRequest.trim()) {
+      setWizardNotice("Elige una experiencia del catálogo o selecciona otra actividad y descríbela.");
       return;
     }
     if (!dateIsFlexible && dateInputRef.current && !dateInputRef.current.reportValidity()) {
@@ -606,7 +593,7 @@ function App() {
             <CalendarDays size={19} /> Itinerario
           </button>
           <button type="button" onClick={() => navigateTo("expenses")} aria-current={screen === "expenses" ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left font-semibold ${screen === "expenses" ? "bg-emerald-50 text-emerald-900" : "text-stone-600 hover:bg-stone-50"}`}>
-            <Wallet size={19} /> Gastos
+            <Wallet size={19} /> Cotización
           </button>
         </nav>
 
@@ -638,13 +625,13 @@ function App() {
               {screen === "explore" && "Explora el mundo a tu manera."}
               {screen === "request" && "Prepara una experiencia."}
               {screen === "itinerary" && "Tu itinerario."}
-              {screen === "expenses" && "Tu presupuesto."}
+              {screen === "expenses" && "Tu cotización."}
             </h1>
             <p className="mt-3 text-stone-500">
               {screen === "explore" && "Encuentra actividades y alojamiento cerca de lo que quieres vivir."}
               {screen === "request" && "Unos pasos breves para preparar tu experiencia."}
               {screen === "itinerary" && "Consulta las fechas y actividades de tus planes."}
-              {screen === "expenses" && "Revisa el desglose de tu estimación."}
+              {screen === "expenses" && "Consulta el estado de tu solicitud y la propuesta manual."}
             </p>
           </div>
           <button
@@ -661,7 +648,7 @@ function App() {
             ["explore", "Explorar"],
             ["request", "Solicitud"],
             ["itinerary", "Itinerario"],
-            ["expenses", "Gastos"],
+            ["expenses", "Cotización"],
           ] as const).map(([page, label]) => (
             <button
               key={page}
@@ -680,7 +667,7 @@ function App() {
         <section className="mt-9 grid gap-4 sm:grid-cols-3">
           <Stat icon={<Ticket size={20} />} label="Experiencias de muestra" value="04" />
           <Stat icon={<MapPin size={20} />} label="Destinos destacados" value="04" />
-          <Stat icon={<Wallet size={20} />} label="Precio de muestra desde" value="35 €" />
+          <Stat icon={<Wallet size={20} />} label="Cotización" value="Personalizada" />
         </section>
 
         <section id="destinations" className="mt-12">
@@ -812,7 +799,7 @@ function App() {
               : `Cuéntanos qué actividad te interesa en ${destination.name} y te prepararemos una propuesta.`}
               </p>
               <p className="mt-1 text-xs text-stone-400">
-                Los precios y alojamientos visibles son datos de ejemplo, no tarifas en tiempo real.
+                La disponibilidad y los precios se revisan manualmente para cada solicitud.
               </p>
             </div>
             <label className="flex items-center gap-2 text-sm text-stone-600">
@@ -846,7 +833,6 @@ function App() {
                       {experience.category}
                     </span>
                     <span className="absolute bottom-4 right-4 rounded-full bg-white/95 px-3 py-1.5 text-sm font-bold">
-                      {experience.price} <span className="font-normal text-stone-500">/ persona</span>
                     </span>
                   </div>
                   <div className="p-5">
@@ -860,7 +846,6 @@ function App() {
                       onClick={() => {
                         setSelectedExperienceId(experience.id);
                         setActivityRequest(experience.name);
-                        setActivityPrice(String(demoPriceNumber(experience.price)));
                         setRequestSummary(null);
                         document.getElementById("hotels")?.scrollIntoView({ behavior: "smooth" });
                       }}
@@ -874,7 +859,6 @@ function App() {
                       onClick={() => {
                         setSelectedExperienceId(experience.id);
                         setActivityRequest(experience.name);
-                        setActivityPrice(String(demoPriceNumber(experience.price)));
                         setRequestSummary(null);
                         setScreen("request");
                         setWizardStep(1);
@@ -892,7 +876,7 @@ function App() {
           ) : (
             <p className="rounded-2xl border border-stone-200 bg-white p-6 text-stone-600">
               {customDestination
-                ? `Aún no mostramos actividades para ${destination.name}. Describe en el formulario qué te gustaría hacer y añadiremos tu petición al presupuesto orientativo.`
+                ? `Aún no mostramos actividades para ${destination.name}. Describe en el formulario qué te gustaría hacer y prepararemos una cotización manual.`
                 : `No hay experiencias de esta categoría en ${destination.name}. Prueba otra categoría.`}
             </p>
           )}
@@ -939,15 +923,11 @@ function App() {
                         : hotel.distance}
                     </p>
                     <div className="mt-auto flex items-end justify-between gap-3 pt-5">
-                      <p className="font-bold text-emerald-900">
-                        {hotel.price}<span className="ml-1 text-sm font-normal text-stone-500">/ noche</span>
-                      </p>
                       <button
                         type="button"
                         onClick={() => {
                           setHotelInterest(true);
                           setSelectedHotelName(hotel.name);
-                          setHotelNightlyPrice(String(demoPriceNumber(hotel.price)));
                           setRequestSummary(null);
                           setScreen("request");
                           setWizardStep(1);
@@ -964,11 +944,11 @@ function App() {
             </div>
           ) : (
             <p className="rounded-2xl border border-stone-200 bg-white p-6 text-stone-600">
-              Aún no tenemos hoteles de muestra en este lugar. Puedes indicar si necesitas alojamiento y tu presupuesto; no se mostrarán precios reales hasta conectar disponibilidad.
+              Aún no tenemos hoteles de muestra en este lugar. Puedes indicar si necesitas alojamiento y prepararemos una propuesta manual.
             </p>
           )}
           <p className="mt-4 flex items-center gap-2 text-xs text-stone-400">
-            <Users size={14} /> Precios orientativos; disponibilidad y tarifas finales dependen de las fechas.
+            <Users size={14} /> La disponibilidad y el precio final se confirman al preparar tu cotización.
           </p>
         </section>
         <section aria-label={`Mapa de ${destination.name}`} className="mb-8 mt-6 overflow-hidden rounded-2xl border border-stone-200 bg-white">
@@ -1169,7 +1149,7 @@ function App() {
           </div>
 
           <ol className="mb-6 grid grid-cols-3 gap-2" aria-label="Pasos para preparar la experiencia">
-            {["Actividad", "Alojamiento y gastos", "Revisión"].map((label, index) => {
+            {["Actividad", "Alojamiento y preferencias", "Revisión"].map((label, index) => {
               const step = index + 1;
               return (
                 <li key={label} className={`rounded-xl px-3 py-3 text-center text-xs font-semibold sm:text-sm ${wizardStep === step ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}>
@@ -1196,52 +1176,46 @@ function App() {
                 />
               </label>
               <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>¿Qué te gustaría hacer?</span>
-                <input
-                  name="activityRequest"
-                  value={activityRequest}
+                <span>¿Qué experiencia te interesa?</span>
+                <select
+                  name="experience"
+                  value={selectedExperienceId ?? ""}
                   onChange={(event) => {
-                    setActivityRequest(event.target.value);
-                    setSelectedExperienceId(null);
-                    setActivityPrice("");
+                    setSelectedExperienceId(event.target.value || null);
+                    setActivityRequest("");
                     setRequestSummary(null);
                   }}
                   required
-                  placeholder="Ej.: visitar un estadio, hacer senderismo, una clase de cocina..."
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>O elige una experiencia del catálogo de muestra</span>
-                <select
-                  name="experience"
-                  value={selectedExperience?.id ?? ""}
-                  onChange={(event) => {
-                    const experience = allDestinationExperiences.find(
-                      (item) => item.id === event.target.value,
-                    );
-                    setSelectedExperienceId(experience?.id ?? null);
-                    if (experience) {
-                      setActivityRequest(experience.name);
-                      setActivityPrice(String(demoPriceNumber(experience.price)));
-                    } else {
-                      setActivityRequest("");
-                      setActivityPrice("");
-                    }
-                    setRequestSummary(null);
-                  }}
                   className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-[#202820] outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                 >
-                  <option value="">Sin elegir / petición personalizada</option>
+                  <option value="">Elige una experiencia</option>
                   {allDestinationExperiences.map((experience) => (
                     <option key={experience.id} value={experience.id}>
-                      {experience.name} · {experience.price} por persona
+                      {experience.name}
                     </option>
                   ))}
+                  <option value="custom">Otra experiencia (describir)</option>
                 </select>
               </label>
+              {selectedExperienceId === "custom" && (
+                <label className="space-y-2 text-sm font-medium text-stone-700">
+                  <span>Describe la experiencia que buscas</span>
+                  <input
+                    name="activityRequest"
+                    maxLength={300}
+                    value={activityRequest}
+                    onChange={(event) => {
+                      setActivityRequest(event.target.value);
+                      setRequestSummary(null);
+                    }}
+                    required
+                    placeholder="Ej.: una clase de cocina local o una visita guiada"
+                    className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                  />
+                </label>
+              )}
               <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Presupuesto máximo deseado para el grupo (€)</span>
+                <span>Presupuesto total aproximado para el grupo (€)</span>
                 <input
                   type="number"
                   name="budget"
@@ -1277,60 +1251,24 @@ function App() {
                   Mis fechas son flexibles
                 </label>
               </div>
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Días que estarás en el destino</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="90"
-                  value={days}
-                  onChange={(event) => setDays(Math.max(1, Number(event.target.value)))}
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
+              <QuantityStepper
+                label="Días que estarás en el destino"
+                value={days}
+                min={1}
+                max={90}
+                displayValue={`${days} ${days === 1 ? "día" : "días"}`}
+                onChange={setDays}
+              />
             </div>
 
-            <fieldset>
-              <legend className="mb-3 text-sm font-semibold text-stone-700">¿Quiénes van? Puedes viajar solo o en grupo.</legend>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <label className="space-y-2 text-sm font-medium text-stone-700">
-                  <span>Adultos</span>
-                  <input
-                    type="number"
-                    name="adults"
-                    min="1"
-                    max="30"
-                    value={adults}
-                    onChange={(event) => setAdults(Math.max(1, Number(event.target.value)))}
-                    required
-                    className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                  />
-                </label>
-                <label className="space-y-2 text-sm font-medium text-stone-700">
-                  <span>Niños</span>
-                  <input
-                    type="number"
-                    name="children"
-                    min="0"
-                    max="30"
-                    value={children}
-                    onChange={(event) => setChildren(Math.max(0, Number(event.target.value)))}
-                    className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                  />
-                </label>
-                {children > 0 && (
-                  <label className="space-y-2 text-sm font-medium text-stone-700 sm:col-span-2">
-                    <span>Edades de los niños (opcional, para estimar tarifas)</span>
-                    <input
-                      type="text"
-                      name="childrenAges"
-                      placeholder="Por ejemplo: 6, 9"
-                      className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                    />
-                  </label>
-                )}
-              </div>
-            </fieldset>
+            <QuantityStepper
+              label="¿Cuántas personas viajan?"
+              value={travelers}
+              min={1}
+              max={30}
+              displayValue={`${travelers} ${travelers === 1 ? "persona" : "personas"}`}
+              onChange={setTravelers}
+            />
 
             <div className="flex justify-end">
               <button
@@ -1338,7 +1276,7 @@ function App() {
                 onClick={continueWizard}
                 className="rounded-xl bg-emerald-800 px-5 py-3 font-semibold text-white transition hover:bg-emerald-700"
               >
-                Continuar a alojamiento y gastos
+                Continuar a alojamiento y preferencias
               </button>
             </div>
             {wizardNotice && <p role="alert" className="text-sm text-rose-700">{wizardNotice}</p>}
@@ -1365,46 +1303,9 @@ function App() {
                 <textarea
                   name="specialRequirements"
                   rows={3}
+                  maxLength={1000}
                   placeholder="Por ejemplo, movilidad reducida, ritmo tranquilo o actividad para familias."
                   className="w-full resize-y rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-            </div>
-
-            <div className="grid gap-5 sm:grid-cols-2">
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Número de actividades iguales</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={activityCount}
-                  onChange={(event) => setActivityCount(Math.max(1, Number(event.target.value)))}
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Precio estimado de la actividad por persona (€)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={activityPrice}
-                  onChange={(event) => setActivityPrice(event.target.value)}
-                  placeholder="Añade el precio si lo conoces"
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Comidas por persona y día (€)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={mealsPerPersonPerDay}
-                  onChange={(event) => setMealsPerPersonPerDay(event.target.value)}
-                  placeholder="Opcional"
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                 />
               </label>
             </div>
@@ -1418,7 +1319,6 @@ function App() {
                     setHotelInterest(event.target.checked);
                     if (!event.target.checked) {
                       setSelectedHotelName("");
-                      setHotelNightlyPrice("");
                     }
                   }}
                   className="mt-0.5 h-4 w-4 accent-emerald-800"
@@ -1445,6 +1345,7 @@ function App() {
                     <input
                       type="text"
                       name="hotelArea"
+                      maxLength={120}
                       placeholder="Por ejemplo, cerca del estadio"
                       className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                     />
@@ -1455,9 +1356,7 @@ function App() {
                       name="hotel"
                       value={selectedHotelName}
                       onChange={(event) => {
-                        const hotel = recommendedHotels.find((item) => item.name === event.target.value);
                         setSelectedHotelName(event.target.value);
-                        setHotelNightlyPrice(hotel ? String(demoPriceNumber(hotel.price)) : "");
                       }}
                       className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
                     >
@@ -1467,74 +1366,28 @@ function App() {
                       ))}
                     </select>
                   </label>
-                  <label className="space-y-2 text-sm font-medium text-stone-700">
-                    <span>Noches aproximadas</span>
-                    <input
-                      type="number"
-                      name="nights"
-                      min="1"
-                      max="30"
-                      value={hotelNights}
-                      onChange={(event) => setHotelNights(Math.max(1, Number(event.target.value)))}
-                      required={hotelInterest}
-                      className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                    />
-                  </label>
-                  <label className="space-y-2 text-sm font-medium text-stone-700">
-                    <span>Precio aproximado del hotel por noche (€)</span>
-                    <input
-                      type="number"
-                      name="hotelBudget"
-                      min="0"
-                      step="0.01"
-                      value={hotelNightlyPrice}
-                      onChange={(event) => setHotelNightlyPrice(event.target.value)}
-                      placeholder="Añade el precio si lo conoces"
-                      className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                    />
-                  </label>
-                  <label className="space-y-2 text-sm font-medium text-stone-700">
-                    <span>Habitaciones</span>
-                    <input
-                      type="number"
-                      name="rooms"
-                      min="1"
-                      max="20"
-                      value={hotelRooms}
-                      onChange={(event) => setHotelRooms(Math.max(1, Number(event.target.value)))}
-                      className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                    />
-                  </label>
+                  <QuantityStepper
+                    label="Noches aproximadas"
+                    value={hotelNights}
+                    min={1}
+                    max={30}
+                    displayValue={`${hotelNights} ${hotelNights === 1 ? "noche" : "noches"}`}
+                    onChange={setHotelNights}
+                  />
+                  <QuantityStepper
+                    label="Habitaciones"
+                    value={hotelRooms}
+                    min={1}
+                    max={20}
+                    onChange={setHotelRooms}
+                  />
                 </div>
               )}
             </div>
 
-            <div className="grid gap-5 sm:grid-cols-2">
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Transporte local para el grupo (€)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={localTransport}
-                  onChange={(event) => setLocalTransport(event.target.value)}
-                  placeholder="Opcional: transporte público, taxi, etc."
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-              <label className="space-y-2 text-sm font-medium text-stone-700">
-                <span>Otros gastos para el grupo (€)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={extras}
-                  onChange={(event) => setExtras(event.target.value)}
-                  placeholder="Opcional: entradas, extras..."
-                  className="w-full rounded-xl border border-stone-200 px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                />
-              </label>
-            </div>
+            <p className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm leading-6 text-stone-600">
+              Revisaremos disponibilidad y prepararemos manualmente una propuesta según el destino, las fechas, el grupo y tus preferencias. No calculamos importes automáticamente.
+            </p>
 
             <div className="flex flex-wrap justify-between gap-3">
               <button
@@ -1549,106 +1402,26 @@ function App() {
                 onClick={() => setWizardStep(3)}
                 className="rounded-xl bg-emerald-800 px-5 py-3 font-semibold text-white transition hover:bg-emerald-700"
               >
-                Revisar presupuesto
+                Continuar a revisión
               </button>
             </div>
             </fieldset>
 
             <fieldset disabled={wizardStep !== 3} hidden={wizardStep !== 3} className="min-w-0 space-y-6 border-0 p-0">
-            <section aria-labelledby="estimate-title" className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:p-6">
-              <p className="text-sm font-medium text-emerald-800">PRESUPUESTO ORIENTATIVO</p>
-              <h3 id="estimate-title" className="mt-1 text-xl font-bold">Tu estimación para {destination.name}</h3>
-              <div className="mt-4 space-y-2 text-sm text-stone-700">
-                {activityNeedsQuote ? (
-                  <>
-                    <div className="flex justify-between gap-4">
-                      <span>Experiencia solicitada</span>
-                      <span className="font-medium text-amber-800">Pendiente de cotización</span>
-                    </div>
-                    {Number(activityPrice) > 0 && (
-                      <div className="flex justify-between gap-4">
-                        <span>Referencia introducida, no incluida en el subtotal ({activityCount} × {travelerCount} personas)</span>
-                        <span>{formatEuros(activityTotal)}</span>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="flex justify-between gap-4">
-                    <span>Experiencia de muestra ({activityCount} × {travelerCount} personas)</span>
-                    <span>{activityPrice ? formatEuros(activityTotal) : "Añade un precio"}</span>
-                  </div>
-                )}
-                {targetBudget && estimateComplete && (
-                  <p className={`mt-3 text-sm font-semibold ${totalEstimate > Number(targetBudget) ? "text-rose-700" : "text-emerald-800"}`}>
-                    {totalEstimate > Number(targetBudget)
-                      ? `La estimación supera tu presupuesto objetivo de ${formatEuros(Number(targetBudget))}.`
-                      : `La estimación está dentro de tu presupuesto objetivo de ${formatEuros(Number(targetBudget))}.`}
-                  </p>
-                )}
-                {targetBudget && !estimateComplete && (
-                  <p className="mt-3 text-sm text-stone-600">
-                    {activityNeedsQuote
-                      ? "La actividad aún necesita cotización para comparar el total con tu presupuesto."
-                      : `Añade el precio${hotelInterest ? " del alojamiento" : ""} para comparar el total con tu presupuesto.`}
-                  </p>
-                )}
-                {hotelInterest && (
-                  <div className="flex justify-between gap-4">
-                    <span>Alojamiento ({hotelRooms} habitaciones · {hotelNights} noches)</span>
-                    <span>{hotelNightlyPrice ? formatEuros(hotelTotal) : "Añade un precio"}</span>
-                  </div>
-                )}
-                {Number(mealsPerPersonPerDay) > 0 && (
-                  <div className="flex justify-between gap-4">
-                    <span>Comidas ({travelerCount} personas · {days} días)</span>
-                    <span>{formatEuros(mealsTotal)}</span>
-                  </div>
-                )}
-                {Number(localTransport) > 0 && (
-                  <div className="flex justify-between gap-4">
-                    <span>Transporte local</span>
-                    <span>{formatEuros(Number(localTransport))}</span>
-                  </div>
-                )}
-                {Number(extras) > 0 && (
-                  <div className="flex justify-between gap-4">
-                    <span>Otros gastos</span>
-                    <span>{formatEuros(Number(extras))}</span>
-                  </div>
-                )}
-                <div className="flex justify-between gap-4 border-t border-emerald-200 pt-3 text-base font-bold text-emerald-950">
-                  <span>{estimateComplete ? "Total estimado" : "Subtotal parcial"}</span>
-                  <span>{formatEuros(knownCostSubtotal)}</span>
-                </div>
-              </div>
-              <p className="mt-3 text-xs leading-5 text-stone-600">
-                Cálculo con los importes que introduces y precios de muestra en los destinos destacados. No consulta tarifas globales ni es una oferta confirmada; no incluye vuelos y pueden variar disponibilidad, impuestos y precios infantiles.
+            <section aria-labelledby="request-summary-title" className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:p-6">
+              <p className="text-sm font-medium text-emerald-800">COTIZACIÓN MANUAL</p>
+              <h3 id="request-summary-title" className="mt-1 text-xl font-bold">Revisaremos tu solicitud para {destination.name}</h3>
+              <p className="mt-3 text-sm leading-6 text-stone-700">
+                El precio no se calcula en esta pantalla. Prepararemos una propuesta según la disponibilidad y los detalles que compartiste antes de confirmar cualquier reserva.
               </p>
+              <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                <div><dt className="text-stone-500">Experiencia</dt><dd className="font-semibold">{selectedExperience?.name ?? activityRequest}</dd></div>
+                <div><dt className="text-stone-500">Grupo</dt><dd className="font-semibold">{travelers} {travelers === 1 ? "persona" : "personas"}</dd></div>
+                <div><dt className="text-stone-500">Estancia</dt><dd className="font-semibold">{days} días{dateIsFlexible ? " · fechas flexibles" : ""}</dd></div>
+                {hotelInterest && <div><dt className="text-stone-500">Alojamiento</dt><dd className="font-semibold">{selectedHotelName || "Por definir"} · {hotelNights} {hotelNights === 1 ? "noche" : "noches"} · {hotelRooms} {hotelRooms === 1 ? "habitación" : "habitaciones"}</dd></div>}
+                {targetBudget && <div><dt className="text-stone-500">Presupuesto orientativo del grupo</dt><dd className="font-semibold">{Number(targetBudget).toLocaleString("es-ES")} €</dd></div>}
+              </dl>
             </section>
-
-            <fieldset className="rounded-2xl border border-stone-200 p-5">
-              <legend className="px-2 text-sm font-semibold text-stone-700">¿Cómo preferirías pagar si confirmas la reserva?</legend>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                {["Tarjeta", "PayPal", "Transferencia"].map((method) => (
-                  <label key={method} className="flex cursor-pointer items-center gap-3 rounded-xl border border-stone-200 px-4 py-3 text-sm text-stone-700 hover:bg-stone-50">
-                    <input
-                      type="radio"
-                      name="paymentMethod"
-                      value={method}
-                      checked={paymentMethod === method}
-                      onChange={() => setPaymentMethod(method)}
-                      required
-                      className="h-4 w-4 accent-emerald-800"
-                    />
-                    {method === "Tarjeta" && <CreditCard size={17} />}
-                    {method}
-                  </label>
-                ))}
-              </div>
-              <p className="mt-3 text-xs leading-5 text-stone-500">
-                Esto solo indica tu preferencia. No introduzcas datos de tarjeta aquí: el pago se haría más adelante mediante una pasarela segura.
-              </p>
-            </fieldset>
 
             <p className="text-sm text-stone-600">
               Usaremos el correo de tu cuenta ({authUser.email}) como contacto principal.
@@ -1662,6 +1435,7 @@ function App() {
                     type="tel"
                     name="phone"
                     autoComplete="tel"
+                    maxLength={32}
                     className="w-full py-3 outline-none"
                   />
                 </span>
@@ -1681,12 +1455,14 @@ function App() {
               </span>
             </label>
 
+            {requestSubmitError && <p role="alert" className="text-sm text-rose-700">{requestSubmitError}</p>}
             <button
               type="submit"
+              disabled={requestSubmitBusy}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-5 py-3.5 font-semibold text-white transition hover:bg-emerald-700 sm:w-auto"
             >
               <Send size={18} />
-              Ver resumen estimado
+              {requestSubmitBusy ? "Guardando solicitud..." : "Guardar solicitud y ver resumen"}
             </button>
             </fieldset>
           </form>
@@ -1706,7 +1482,7 @@ function App() {
             <article className="rounded-2xl bg-stone-50 p-5">
               <p className="text-sm font-semibold text-emerald-800">VISTA PREVIA · AÚN NO RESERVADA</p>
               <h3 className="mt-2 text-xl font-bold">{requestSummary.experience}</h3>
-              <p className="mt-2 text-stone-600">{requestSummary.destination} · {requestSummary.adults + requestSummary.children} personas</p>
+              <p className="mt-2 text-stone-600">{requestSummary.destination} · {requestSummary.travelers} {requestSummary.travelers === 1 ? "persona" : "personas"}</p>
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2 text-sm font-medium text-stone-700">
                   <span>Fecha de la experiencia</span>
@@ -1736,20 +1512,14 @@ function App() {
                     Tengo fechas flexibles
                   </span>
                 </label>
-                <label className="space-y-2 text-sm font-medium text-stone-700">
-                  <span>Días en el destino</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="90"
-                    value={requestSummary.days}
-                    onChange={(event) => setRequestSummary((current) => current ? {
-                      ...current,
-                      days: Math.max(1, Number(event.target.value)),
-                    } : current)}
-                    className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
-                  />
-                </label>
+                <QuantityStepper
+                  label="Días en el destino"
+                  value={requestSummary.days}
+                  min={1}
+                  max={90}
+                  displayValue={`${requestSummary.days} ${requestSummary.days === 1 ? "día" : "días"}`}
+                  onChange={(days) => setRequestSummary((current) => current ? { ...current, days } : current)}
+                />
               </div>
               <button
                 type="button"
@@ -1778,58 +1548,35 @@ function App() {
         {screen === "expenses" && (
         <section className="mb-10 rounded-3xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="mb-6">
-            <p className="text-sm font-medium text-emerald-800">DESGLOSE</p>
-            <h2 className="mt-1 text-2xl font-bold">Gastos y presupuesto</h2>
+            <p className="text-sm font-medium text-emerald-800">RESUMEN DE SOLICITUD</p>
+            <h2 className="mt-1 text-2xl font-bold">Tu solicitud de cotización</h2>
           </div>
           {requestSummary ? (
             <div className="max-w-2xl">
-              <div className="mb-5 rounded-2xl bg-stone-50 p-5">
-                <p className="font-semibold">{requestSummary.experience}</p>
-                <p className="mt-1 text-sm text-stone-500">{requestSummary.destination} · {requestSummary.adults + requestSummary.children} personas</p>
-              </div>
-              <dl className="space-y-3 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt>{requestSummary.activityNeedsQuote ? "Actividad solicitada" : "Actividad (precio de muestra)"}</dt>
-                  <dd className={requestSummary.activityNeedsQuote ? "font-medium text-amber-800" : ""}>
-                    {requestSummary.activityNeedsQuote ? "Pendiente de cotización" : formatEuros(requestSummary.activityTotal)}
-                  </dd>
-                </div>
-                {requestSummary.hotel && (
-                  <div className="flex justify-between gap-4">
-                    <dt>Alojamiento · {requestSummary.rooms} habitaciones · {requestSummary.nights} noches</dt>
-                    <dd className={requestSummary.hotelNeedsQuote ? "font-medium text-amber-800" : ""}>
-                      {requestSummary.hotelNeedsQuote ? "Pendiente de cotización" : formatEuros(requestSummary.hotelTotal)}
-                    </dd>
-                  </div>
-                )}
-                {requestSummary.mealsTotal > 0 && <div className="flex justify-between gap-4"><dt>Comidas</dt><dd>{formatEuros(requestSummary.mealsTotal)}</dd></div>}
-                {requestSummary.localTransport > 0 && <div className="flex justify-between gap-4"><dt>Transporte local</dt><dd>{formatEuros(requestSummary.localTransport)}</dd></div>}
-                {requestSummary.extras > 0 && <div className="flex justify-between gap-4"><dt>Otros gastos</dt><dd>{formatEuros(requestSummary.extras)}</dd></div>}
-                <div className="flex justify-between gap-4 border-t border-stone-200 pt-4 text-lg font-bold">
-                  <dt>{requestSummary.estimateComplete ? "Estimación orientativa" : "Subtotal de costes conocidos"}</dt>
-                  <dd>{formatEuros(requestSummary.total)}</dd>
-                </div>
-              </dl>
-              {(requestSummary.activityNeedsQuote || requestSummary.hotelNeedsQuote) && (
-                <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-                  {requestSummary.activityNeedsQuote && "La actividad todavía no tiene precio para este destino. El subtotal no la incluye."}
-                  {requestSummary.activityNeedsQuote && requestSummary.hotelNeedsQuote && " "}
-                  {requestSummary.hotelNeedsQuote && "El alojamiento tampoco tiene precio confirmado. "}
-                  El total final queda pendiente de cotización.
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                <p className="font-semibold text-amber-950">Pendiente de cotización manual</p>
+                <p className="mt-1 text-sm leading-6 text-amber-900">
+                  No mostramos un precio automático. La propuesta se calculará manualmente al revisar disponibilidad y detalles.
                 </p>
-              )}
-              {requestSummary.targetBudget > 0 && (
-                <p className="mt-3 text-sm text-stone-600">Tu presupuesto objetivo: {formatEuros(requestSummary.targetBudget)}.</p>
-              )}
-              <p className="mt-4 text-xs leading-5 text-stone-500">
-                Esta vista previa está solo en tu sesión del navegador. No es una reserva ni una tarifa confirmada y se perderá al recargar.
+              </div>
+              <dl className="mt-5 grid gap-4 rounded-2xl bg-stone-50 p-5 text-sm sm:grid-cols-2">
+                <div><dt className="text-stone-500">Experiencia</dt><dd className="mt-1 font-semibold">{requestSummary.experience}</dd></div>
+                <div><dt className="text-stone-500">Destino</dt><dd className="mt-1 font-semibold">{requestSummary.destination}</dd></div>
+                <div><dt className="text-stone-500">Personas</dt><dd className="mt-1 font-semibold">{requestSummary.travelers} {requestSummary.travelers === 1 ? "persona" : "personas"}</dd></div>
+                <div><dt className="text-stone-500">Duración</dt><dd className="mt-1 font-semibold">{requestSummary.days} días</dd></div>
+                <div><dt className="text-stone-500">Fecha</dt><dd className="mt-1 font-semibold">{requestSummary.dateIsFlexible ? "Flexible" : requestSummary.date}</dd></div>
+                {requestSummary.hotel && <div><dt className="text-stone-500">Alojamiento</dt><dd className="mt-1 font-semibold">{requestSummary.hotel} · {requestSummary.rooms} {requestSummary.rooms === 1 ? "habitación" : "habitaciones"} · {requestSummary.nights} {requestSummary.nights === 1 ? "noche" : "noches"}</dd></div>}
+                {requestSummary.targetBudget > 0 && <div><dt className="text-stone-500">Presupuesto total aproximado</dt><dd className="mt-1 font-semibold">{requestSummary.targetBudget.toLocaleString("es-ES")} €</dd></div>}
+              </dl>
+              <p className="mt-4 text-sm leading-6 text-stone-500">
+                Tu solicitud se guardó en tu cuenta. La cotización todavía se preparará manualmente; aún no es una reserva ni un precio confirmado.
               </p>
             </div>
           ) : (
             <div className="rounded-2xl bg-stone-50 p-6 text-center">
               <Wallet className="mx-auto text-emerald-800" size={28} />
-              <p className="mt-3 font-semibold">Aún no hay presupuestos</p>
-              <p className="mt-1 text-sm text-stone-500">Prepara una experiencia para ver su desglose.</p>
+              <p className="mt-3 font-semibold">Aún no tienes solicitudes preparadas</p>
+              <p className="mt-1 text-sm text-stone-500">Prepara una experiencia para ver aquí el resumen y su estado.</p>
               <button type="button" onClick={() => navigateTo("request")} className="mt-4 rounded-xl bg-emerald-800 px-4 py-2.5 font-semibold text-white">
                 Preparar experiencia
               </button>
@@ -1863,6 +1610,51 @@ function Stat({
       </div>
       <p className="mt-4 text-2xl font-bold tracking-tight">{value}</p>
     </div>
+  );
+}
+
+function QuantityStepper({
+  label,
+  value,
+  min,
+  max,
+  displayValue = String(value),
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  displayValue?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <fieldset className="min-w-0 border-0 p-0">
+      <legend className="mb-2 text-sm font-medium text-stone-700">{label}</legend>
+      <div className="flex w-fit items-center gap-4 rounded-xl border border-stone-200 px-3 py-2">
+        <button
+          type="button"
+          aria-label={`Disminuir: ${label}`}
+          onClick={() => onChange(Math.max(min, value - 1))}
+          disabled={value <= min}
+          className="h-10 w-10 rounded-lg border border-stone-200 text-xl font-semibold text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          −
+        </button>
+        <output aria-live="polite" className="min-w-24 text-center font-semibold">
+          {displayValue}
+        </output>
+        <button
+          type="button"
+          aria-label={`Aumentar: ${label}`}
+          onClick={() => onChange(Math.min(max, value + 1))}
+          disabled={value >= max}
+          className="h-10 w-10 rounded-lg border border-stone-200 text-xl font-semibold text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          +
+        </button>
+      </div>
+    </fieldset>
   );
 }
 

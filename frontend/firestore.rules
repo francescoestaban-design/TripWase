@@ -1,0 +1,122 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /requests/{requestId} {
+      function signedIn() {
+        return request.auth != null;
+      }
+
+      function ownsRequest() {
+        return signedIn() && resource.data.ownerId == request.auth.uid;
+      }
+
+      function validRequest() {
+        let data = request.resource.data;
+        return data.keys().hasAll([
+            'ownerId',
+            'ownerEmail',
+            'destination',
+            'destinationCountry',
+            'destinationPlaceId',
+            'experienceId',
+            'experience',
+            'date',
+            'dateIsFlexible',
+            'travelers',
+            'days',
+            'hotelInterest',
+            'hotel',
+            'lodgingType',
+            'hotelArea',
+            'nights',
+            'rooms',
+            'targetBudget',
+            'language',
+            'specialRequirements',
+            'phone',
+            'status',
+            'createdAt'
+          ])
+          && data.keys().hasOnly([
+            'ownerId',
+            'ownerEmail',
+            'destination',
+            'destinationCountry',
+            'destinationPlaceId',
+            'experienceId',
+            'experience',
+            'date',
+            'dateIsFlexible',
+            'travelers',
+            'days',
+            'hotelInterest',
+            'hotel',
+            'lodgingType',
+            'hotelArea',
+            'nights',
+            'rooms',
+            'targetBudget',
+            'language',
+            'specialRequirements',
+            'phone',
+            'status',
+            'createdAt'
+          ])
+          && data.ownerId == request.auth.uid
+          && data.ownerEmail == request.auth.token.email
+          && data.destination is string
+          && data.destination.size() > 0
+          && data.destination.size() <= 160
+          && data.destinationCountry is string
+          && data.destinationCountry.size() <= 100
+          && data.destinationPlaceId is string
+          && data.destinationPlaceId.size() <= 200
+          && data.experienceId is string
+          && data.experienceId.size() <= 100
+          && data.experience is string
+          && data.experience.size() > 0
+          && data.experience.size() <= 300
+          && data.date is string
+          && data.date.size() <= 20
+          && data.dateIsFlexible is bool
+          && data.travelers is int
+          && data.travelers >= 1
+          && data.travelers <= 30
+          && data.days is int
+          && data.days >= 1
+          && data.days <= 90
+          && data.hotelInterest is bool
+          && data.hotel is string
+          && data.hotel.size() <= 200
+          && data.lodgingType is string
+          && data.lodgingType.size() <= 60
+          && data.hotelArea is string
+          && data.hotelArea.size() <= 120
+          && data.nights is int
+          && data.nights >= 0
+          && data.nights <= 30
+          && data.rooms is int
+          && data.rooms >= 0
+          && data.rooms <= 20
+          && data.targetBudget is number
+          && data.targetBudget >= 0
+          && data.language is string
+          && data.language.size() <= 60
+          && data.specialRequirements is string
+          && data.specialRequirements.size() <= 1000
+          && data.phone is string
+          && data.phone.size() <= 32
+          && data.status == 'pending'
+          && data.createdAt == request.time
+          && (data.hotelInterest
+            ? data.nights >= 1 && data.rooms >= 1
+            : data.nights == 0 && data.rooms == 0);
+      }
+
+      allow create: if signedIn() && validRequest();
+      allow get, list: if ownsRequest();
+      allow update, delete: if false;
+    }
+  }
+}
